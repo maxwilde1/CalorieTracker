@@ -4,6 +4,7 @@
 #include <WiFi.h> //existing library for wifi connection
 #include "secrets.h" //include the secrets.h file that contains the wifi credentials
 
+#include <WebServer.h> //existing library for web server functionality
 
 
 
@@ -28,8 +29,10 @@
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
-
-
+//webserver = a class provided by the library that allows you to create a web server on the ESP32. The server listens for incoming HTTP requests on port 80 (the default port for HTTP) and responds with the appropriate content.
+//server = name of object we are creating, also a variable of type WebServer
+// 80 = port number on which the server will listen for incoming requests. Port 80 is the default port for HTTP traffic.
+WebServer server(80); 
 
 void setup() {
   Serial.begin(115200);
@@ -52,7 +55,18 @@ void setup() {
   Serial.println("Wi-Fi connected!");
   Serial.println(WiFi.localIP()); //function that returns the local IP address assigned to the ESP32 by the Wi-Fi network. This is useful for accessing the ESP32 over the network.
 
-  
+
+  //This tells the ESP32 what to do when someone visits its IP address.
+  //server.on() is a function that tells your esp32 what to do when someone visits its IP address. The first argument is the URL path ("/" means the root of the server), and the second argument is a lambda function that defines the response to send back to the client.
+  //[]() is a lambda function, which is an anonymous function that can be defined inline. In this case, it defines the response to send back to the client when they visit the root URL of the server.
+  //server.send() is a function that sends an HTTP response back to the client. The first argument is the HTTP status code (200 means OK), the second argument is the content type ("text/plain" means plain text), and the third argument is the actual content to send back ("Hello from CalorieSense!" in this case).
+  server.on("/", []() {
+  server.send(200, "text/plain", "Hello from CalorieSense!");
+});
+
+server.begin();
+
+
 
   // Create a configuration object for the camera
   //camera_config_t is a predefined struct (structure) = data structure by the esp32 camera library, holds many different settings may include some ints some bools etc. 
@@ -107,6 +121,10 @@ void setup() {
 
 // loop() runs REPEATEDLY while the ESP32 is powered on
 void loop() {
+
+
+    //This checks for incoming browser requests and processes them.
+    server.handleClient();
     
 //camera_fb_t is a data type representing a camera frame buffer
 //*photo is a pointer variable (pointer variable = stores memory address of soemthign rather than actual variable) called photo that points to a camera frame buffer object returned by the esp_camera_fb_get() function. This function captures an image from the camera and returns a pointer to the frame buffer containing the image data.

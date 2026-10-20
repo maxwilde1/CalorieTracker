@@ -21,3 +21,15 @@
 
 #include <WiFi.h> //existing library for wifi connection
 #include "secrets.h" //include code from another file (the secrets.h file that contains the wifi credentials)
+
+
+# Send text over WiFi
+Creation of web server: which allows another device (your computer, phone or eventually your CalorieTracker app) to request information from the ESP32, over the same wifi network only. 
+- `#include <WebServer.h>`
+
+- `WebServer server(80);` - WebServer — A library class for creating a web server on the ESP32. server — The object (variable) created from that class. 80 — The port number the server listens on (default for HTTP).
+- `server.on("/", ...)` — Defines what happens when someone visits the ESP32's homepage (`/`).
+- `[]() {}` — Lambda function (unnamed function) that runs when the URL is requested.
+- `server.send(200, "text/plain", "Hello from CalorieSense!")` — Sends a successful HTTP response (`200`) containing plain text.
+- `server.begin()` — Starts the web server, allowing it to accept connections.
+
