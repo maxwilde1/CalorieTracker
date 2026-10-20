@@ -1,6 +1,12 @@
 //Arduino uses c++ 
 
 #include "esp_camera.h" //existing library for esp32 cam module 
+#include <WiFi.h> //existing library for wifi connection
+#include "secrets.h" //include the secrets.h file that contains the wifi credentials
+
+
+
+
 
 // Camera pin connections for an AI Thinker-style ESP32-CAM
 #define PWDN_GPIO_NUM     32
@@ -27,9 +33,26 @@
 
 void setup() {
   Serial.begin(115200);
+  Serial.println("Starting camera...");
   delay(1000);
 
-  Serial.println("Starting camera...");
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD); //.begin() is a function provided by the WiFi library that intiises the wifi connection.
+  
+  Serial.print("Connecting to Wi-Fi");
+
+  //WiFi.status is function provided by wifi library that returns current status of connection
+  //WL_CONNECTED is a constant provided by the WiFi library that represents a successful connection to a Wi-Fi network
+    //WL_CONNECTED is a constant provided by the WiFi library that represents a successful connection
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println();
+  Serial.println("Wi-Fi connected!");
+  Serial.println(WiFi.localIP()); //function that returns the local IP address assigned to the ESP32 by the Wi-Fi network. This is useful for accessing the ESP32 over the network.
+
+  
 
   // Create a configuration object for the camera
   //camera_config_t is a predefined struct (structure) = data structure by the esp32 camera library, holds many different settings may include some ints some bools etc. 
