@@ -33,3 +33,141 @@ Creation of web server: which allows another device (your computer, phone or eve
 - `server.send(200, "text/plain", "Hello from CalorieSense!")` — Sends a successful HTTP response (`200`) containing plain text.
 - `server.begin()` — Starts the web server, allowing it to accept connections.
 
+# Send image instead of text over wifi
+server.on("/capture", []() {
+    
+  camera_fb_t *photo = esp_camera_fb_get();
+
+
+  if (photo == nullptr) {
+    server.send(500, "text/plain", "Camera capture failed");
+    return;
+  }
+
+  server.sendHeader("Content-Disposition", "inline; filename=photo.jpg");
+  server.setContentLength(photo->len);
+  server.send(200, "image/jpeg", "");
+
+  server.client().write(photo->buf, photo->len);
+
+  esp_camera_fb_return(photo);
+});
+
+server.begin();
+
+
+`server.on("/capture", []() {` — Creates the /capture URL route. When visited, the ESP32 runs the lambda function to capture and send a photo.
+
+`camera_fb_t *photo = esp_camera_fb_get();` — Creates a pointer called photo to a camera frame-buffer structure (camera_fb_t). The function obtains a captured image and returns its memory address.
+
+`if (photo == nullptr) {` — Checks whether capturing failed. nullptr means the pointer doesn't point to a valid object.
+
+`server.send(500, "text/plain", "Camera capture failed");` — Sends an HTTP 500 error with a plain-text message if the camera fails.
+
+`return;` — Exits the function early, preventing the remaining code from running.
+
+`server.sendHeader("Content-Disposition", "inline; filename=photo.jpg"); `— Adds an HTTP header suggesting the browser display the image directly (inline) and use photo.jpg as its filename if saved.
+
+`server.setContentLength(photo->len);` — Specifies the image size in bytes (photo->len), telling the browser how much data to expect.
+
+`server.send(200, "image/jpeg", "");` — Sends a successful HTTP response (200) with JPEG content type. The empty string means the image bytes will be sent separately.
+
+`server.client().write(photo->buf, photo->len);` — Sends the actual image bytes to the connected client. photo->buf points to the image data, and photo->len specifies the number of bytes to send.
+
+`esp_camera_fb_return(photo);` — Returns the frame buffer to the camera driver so its memory can be reused.
+
+`});` — Closes the lambda function and the server.on() call.
+
+`server.begin();` — Starts the ESP32 web server, allowing it to accept incoming HTTP connections.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Pointers explained 
+camera_fb_t *photo = esp_camera_fb_get();
+
+
+1. camera_fb_t — The data type
+This is a struct defined by the ESP32 camera library.
+
+It contains information about a photograph, including:
+- buf — Pointer to the actual image data.
+- len — Size of the image in bytes.
+- width — Image width in pixels.
+- height — Image height in pixels.
+2. *photo — Declares a pointer variable
+Normally, you might write:
+int age = 22;
+
+
+Here, age directly stores the number 22.
+
+But with:
+camera_fb_t *photo;
+
+
+You're creating a variable called photo that stores a memory address rather than a camera_fb_t structure itself.
+
+The * tells C++ that photo is a pointer to a camera_fb_t object.
+3. esp_camera_fb_get() — The function
+This function is provided by the ESP32 camera library.
+
+It obtains a captured image and returns a pointer to the frame-buffer structure containing information about that image.
+4. = — Assigns the returned address
+camera_fb_t *photo = esp_camera_fb_get();
+
+
+This means:
+1. Call esp_camera_fb_get().
+2. The camera driver obtains a photograph.
+3. The function returns the memory address of its frame-buffer structure.
+4. Store that address in the pointer variable photo.
+5. How do we use the pointer?
+Imagine the photograph's frame-buffer structure is stored at memory address 0x2000.
+Illustrative memory address and image values.
+Because photo is a pointer, we access its fields using ->:
+Serial.println(photo->width);  // 640
+Serial.println(photo->height); // 480
+Serial.println(photo->len);    // 45000
+
+
+The -> operator means follow the pointer to the structure, then access the specified field.
+6. Why use a pointer instead of storing the photograph directly?
+Because the camera driver already manages the frame buffer in memory.
+
+Rather than copying it, the function gives us a pointer to access it directly.
+
+This is more efficient, particularly on an ESP32 where memory is limited.
+
+Important: The two meanings of *
+In C++, the asterisk can mean different things depending on where it's used.
+camera_fb_t *photo;   // Declares a pointer
+
+
+But:
+*photo;               // Dereferences the pointer
+
+
+Dereferencing means accessing the actual object at the memory address stored in the pointer.
+
+
+
+
+
+
+
+
+
+
+#
