@@ -56,7 +56,8 @@ server.on("/capture", []() {
 server.begin();
 
 
-`server.on("/capture", []() {` — Creates the /capture URL route. When visited, the ESP32 runs the lambda function to capture and send a photo.
+`server.on("/capture", []() {` — Creates the /capture URL route. When visited, the ESP32 runs the lambda function to capture and send a photo. A lambda is essentially a function you can define directly where it's needed, without giving it a name.
+
 
 `camera_fb_t *photo = esp_camera_fb_get();` — Creates a pointer called photo to a camera frame-buffer structure (camera_fb_t). The function obtains a captured image and returns its memory address.
 
@@ -72,13 +73,28 @@ server.begin();
 
 `server.send(200, "image/jpeg", "");` — Sends a successful HTTP response (200) with JPEG content type. The empty string means the image bytes will be sent separately.
 
-`server.client().write(photo->buf, photo->len);` — Sends the actual image bytes to the connected client. photo->buf points to the image data, and photo->len specifies the number of bytes to send.
+`server.client().write(photo->buf, photo->len);` — shorthand for `(*photo).len` and `(*photo).buf` Sends the actual image bytes to the connected client. photo->buf points to the image data, and photo->len specifies the number of bytes to send.
 
 `esp_camera_fb_return(photo);` — Returns the frame buffer to the camera driver so its memory can be reused.
 
 `});` — Closes the lambda function and the server.on() call.
 
 `server.begin();` — Starts the ESP32 web server, allowing it to accept incoming HTTP connections.
+
+
+
+
+
+# Connecting Button to camera
+Welded on a button to GPIO 13 pin on the left side and GND on the right side of ESP32 as seen: 
+![esp32 with button](image.png)
+
+now to add in the code:
+- `const int BUTTON_PIN = 13;` - constant (value which cannot be changed) named BUTTON_PIN with the value 13 (GPIO 13)
+
+- `pinMode(BUTTON_PIN, INPUT_PULLUP);` - pinMode() is an arduino function telling esp32 how to use a particular pin pinMode(pin, mode). Mode = how you want pin to behave. Pin to configure = BUTTON_PIN (13). INPUT_PULLUP tells the ESP32 that GPIO 13 is an internal pull up resistor. Button pressed = low and button released = high, relating to voltage level 
+
+ `if (digitalRead(BUTTON_PIN) == LOW) { Serial.println("Button pressed!"); } ` - digitalRead() is a function that detects whether a GPIO pin is high or low. This is inside the loop so constantly checking whether voltage is low from GPIO 13. 
 
 
 
@@ -170,4 +186,39 @@ Dereferencing means accessing the actual object at the memory address stored in 
 
 
 
-#
+# App Development using Expo Go 
+## Expo Go
+- 'node -v' to check if nofe.js is downloaded in vs terminal
+'npx.cmd create-expo-app@latest mobile' 
+- adding on cmd bypasses powershell script restrictions
+- npx — Runs a package without requiring a global installation.
+- create-expo-app — Expo's tool for creating React Native projects.
+- @latest — Uses the latest version of the project creation tool.
+mobile — Names the new project folder.
+- cd mobile - opens cd file path in vs terminal - this is where packages are to run expo
+
+Expo automatically creates a React Native project template when you run npx create-expo-app.
+Here's what matters:
+- src/ — Where you write your app's code.
+- assets/ — Images, icons and fonts.
+- node_modules/ — Downloaded libraries your app uses.
+- package.json — Lists libraries and commands for your project.
+- package-lock.json — Records exact library versions.
+- app.json — App settings (name, icon, etc.).
+- tsconfig.json — TypeScript configuration.
+- .gitignore — Files Git shouldn't upload to GitHub.
+- README.md — Project documentation.
+Key point: Expo creates the basic structure so you can focus on building your app.
+
+run **npx.cmd expo start** inside \mobile route of project
+
+# Next steps:
+1. Get the ESP32 saving a photograph locally when you press the button.
+2. Implement a queue of up to 10 photographs.
+3. Connect Supabase and create an upload endpoint.
+4. Automatically upload queued photos when connected to Wi-Fi.
+4. Analyse photographs using OpenAI.
+5. Display the results in your Expo app.
+
+
+

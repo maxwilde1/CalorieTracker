@@ -4,8 +4,9 @@
 #include <WiFi.h> //existing library for wifi connection
 #include "secrets.h" //include the secrets.h file that contains the wifi credentials
 
-#include <WebServer.h> //existing library for web server functionality
+#include "SD_MMC.h" //library interface for communicating with SD cards 
 
+#include "FS.h" //library for file system operations, such as reading and writing files on the SD card
 
 
 
@@ -29,24 +30,64 @@
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
-//webserver = a class provided by the library that allows you to create a web server on the ESP32. The server listens for incoming HTTP requests on port 80 (the default port for HTTP) and responds with the appropriate content.
-//server = name of object we are creating, also a variable of type WebServer
-// 80 = port number on which the server will listen for incoming requests. Port 80 is the default port for HTTP traffic.
-WebServer server(80); 
+
+
+//This creates a constant named BUTTON_PIN with the value 13.
+const int BUTTON_PIN = 13;
+
+
+
+
+void takePhoto(){
+  camera_fb_t *photo = esp_camera_fb_get();
+
+  if (photo == nullptr) {
+    Serial.println("Photo capture failed!");
+    return;
+  }
+
+  // Open a file on the SD card
+  //creates a variable representing a file on the SD card, and opens it for writing. The file is named "photo.jpg" and is located in the root directory of the SD card.
+  File file = SD_MMC.open("/photo.jpg", FILE_WRITE);
+
+  if (!file) {
+    Serial.println("Failed to open file!");
+    esp_camera_fb_return(photo);
+    return;
+  }
+
+  // Write the photo data into the file
+  file.write(photo->buf, photo->len);
+
+  // Close the file
+  file.close();
+
+  //you're returning the memory buffer to the camera driver, meaning the photograph is no longer available for your program to use.
+  //fine for testing, but we'll need to send the photograph somewhere before returning the buffer.
+  esp_camera_fb_return(photo);
+  
+  Serial.println("Photo saved to SD card!");
+};
 
 void setup() {
   Serial.begin(115200);
   Serial.println("Starting camera...");
   delay(1000);
 
+
+  //INPUT_PULLUP tells the ESP32 to treat GPIO 13 as an input and use its internal pull-up resistor.
+  //this means button pressed = low and button released = high. This is because the internal pull-up resistor connects the pin to a high voltage level when the button is not pressed, and when the button is pressed, it connects the pin to ground (low voltage level).
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+
+  //WHILE LOOP CURRENTLY MEANS WIFI CONNECTION NEEDED FOR REST OF PROGRAM TO RUN - NEED TO CHANGE SO CAN RUN OFFLINE
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD); //.begin() is a function provided by the WiFi library that intiises the wifi connection.
-  
   Serial.print("Connecting to Wi-Fi");
 
   //WiFi.status is function provided by wifi library that returns current status of connection
   //WL_CONNECTED is a constant provided by the WiFi library that represents a successful connection to a Wi-Fi network
     //WL_CONNECTED is a constant provided by the WiFi library that represents a successful connection
-  while (WiFi.status() != WL_CONNECTED) {
+  while (WiFi.status() != WL_CONNECTED) { 
     delay(500);
     Serial.print(".");
   }
@@ -56,54 +97,14 @@ void setup() {
   Serial.println(WiFi.localIP()); //function that returns the local IP address assigned to the ESP32 by the Wi-Fi network. This is useful for accessing the ESP32 over the network.
 
 
-  //This tells the ESP32 what to do when someone visits its IP address.
-  //server.on() is a function that tells your esp32 what to do when someone visits its IP address. The first argument is the URL path ("/" means the root of the server), and the second argument is a lambda function that defines the response to send back to the client.
-  //[]() is a lambda function, which is an anonymous function that can be defined inline. In this case, it defines the response to send back to the client when they visit the root URL of the server.
-  //server.send() is a function that sends an HTTP response back to the client. The first argument is the HTTP status code (200 means OK), the second argument is the content type ("text/plain" means plain text), and the third argument is the actual content to send back
-  server.on("/", []() {
-    server.send(200, "text/plain", "Hello from CalorieSense!");
-  });
 
-
-
-  //capture is at the end of the IP link telling the esp to take a photo and send it to that web page
-  server.on("/capture", []() {
-    //camera_fb_t = predefined data structure (like before) representing camera frame buffer
-    //*photo = declares pointer variable called photo
-    //esp_camera_fb_get() = obtains captured frame from cam driver
-    camera_fb_t *photo = esp_camera_fb_get();
-
-
-    //nullptr = a special C++ value meaning poinrer doesnt point to a valid object
-    if (photo == nullptr) {
-      server.send(500, "text/plain", "Camera capture failed");
-      return;
-    }
-    //.sendHeader() = function that adds an HTTP response header
-    //"Content-Disposition" = name of the HTTP header that controls how the broswer handles the file
-    //inline = tells the browser to display the img directly rather than download as attachment
-    //suggest filename if img is saved
-    server.sendHeader("Content-Disposition", "inline; filename=photo.jpg");
-    //Specifies image size
-    //photo->len = size of image data in bytes
-    //setContentLength() = tells server how much data will be sent in response - helps browser know when it has received the complete image
-    server.setContentLength(photo->len);
-    //Sends response headers
-    //image/jpeg = tells browser response contains a jpeg image
-    //"" = empty string because noy sending actual img data through this method
-    server.send(200, "image/jpeg", "");
-    //Sends the photograph - important line
-    //server.client() = returns the client connection associated with the current HTTP request
-    //.write() = writes bytes to that connection
-    //photo->buf = a pointer to the beginning of the img data in memory
-    //photo->len = the no. bytes to send 
-    server.client().write(photo->buf, photo->len);
-    //Returns the buffer - need to tell camera driver we're finished using its buffer. returns the buffer to the driver.
-    esp_camera_fb_return(photo);
-  });
-
-  server.begin();
-
+//SD_MMC.begin() = function provided by the SD_MMC library that initializes the SD card interface and mounts the file system on the SD card.
+  if (SD_MMC.begin("/sdcard", true)) {
+      Serial.println("SD card connected!");
+  }   
+  else {
+  Serial.println("SD card failed!");
+  }
 
   // Create a configuration object for the camera
   //camera_config_t is a predefined struct (structure) = data structure by the esp32 camera library, holds many different settings may include some ints some bools etc. 
@@ -160,8 +161,14 @@ void setup() {
 void loop() {
 
 
-    //This checks for incoming browser requests and processes them.
-    server.handleClient();
+      //digitalRead() = function that detects whether a GPIO pin is high or low
+      if (digitalRead(BUTTON_PIN) == LOW) {
+        //Serial.println("Button pressed!");
+        takePhoto();
+        while (digitalRead(BUTTON_PIN) == LOW) { //improved code to prevent multiple photos being taken 
+          delay(10);
+        }
+      }
 
   }
 
