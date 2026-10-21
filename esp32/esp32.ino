@@ -35,6 +35,8 @@
 //This creates a constant named BUTTON_PIN with the value 13.
 const int BUTTON_PIN = 13;
 
+//Global variable to keep track of the photo number
+int photoNumber = 1; 
 
 
 
@@ -46,9 +48,16 @@ void takePhoto(){
     return;
   }
 
-  // Open a file on the SD card
-  //creates a variable representing a file on the SD card, and opens it for writing. The file is named "photo.jpg" and is located in the root directory of the SD card.
-  File file = SD_MMC.open("/photo.jpg", FILE_WRITE);
+  //Create variable of filename to save photo to SD card.
+  String filename = "/photo" + String(photoNumber) + ".jpg";
+  // Keep increasing the number until we find an unused filename, will not overwrite even after resetting
+  while (SD_MMC.exists(filename)) {
+    photoNumber++;
+    filename = "/photo" + String(photoNumber) + ".jpg";
+  }
+  // Open a file on the SD carD
+  //creates a variable representing a file on the SD card, and opens it for writing. The file is named "photo(number).jpg" and is located in the root directory of the SD card.
+  File file = SD_MMC.open(filename, FILE_WRITE);
 
   if (!file) {
     Serial.println("Failed to open file!");
@@ -62,12 +71,18 @@ void takePhoto(){
   // Close the file
   file.close();
 
+  //increment the photo number for the next photo
+  photoNumber++;
+
   //you're returning the memory buffer to the camera driver, meaning the photograph is no longer available for your program to use.
   //fine for testing, but we'll need to send the photograph somewhere before returning the buffer.
   esp_camera_fb_return(photo);
   
-  Serial.println("Photo saved to SD card!");
+  Serial.println("Photo " + String(photoNumber) + " saved to SD card!");
 };
+
+
+
 
 void setup() {
   Serial.begin(115200);
@@ -84,18 +99,27 @@ void setup() {
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD); //.begin() is a function provided by the WiFi library that intiises the wifi connection.
   Serial.print("Connecting to Wi-Fi");
 
-  //WiFi.status is function provided by wifi library that returns current status of connection
-  //WL_CONNECTED is a constant provided by the WiFi library that represents a successful connection to a Wi-Fi network
-    //WL_CONNECTED is a constant provided by the WiFi library that represents a successful connection
-  while (WiFi.status() != WL_CONNECTED) { 
+  //attempts 10 times every 0.5s
+  int attempts = 0;
+
+  while (WiFi.status() != WL_CONNECTED && attempts < 10) {
     delay(500);
     Serial.print(".");
+    attempts++;
   }
 
-  Serial.println();
-  Serial.println("Wi-Fi connected!");
-  Serial.println(WiFi.localIP()); //function that returns the local IP address assigned to the ESP32 by the Wi-Fi network. This is useful for accessing the ESP32 over the network.
 
+
+  Serial.println();
+
+
+  if (WiFi.status() == WL_CONNECTED) {
+   Serial.println("Wi-Fi connected!");
+   Serial.println(WiFi.localIP());
+  }   
+  else {
+    Serial.println("No Wi-Fi available. Continuing offline...");
+  }
 
 
 //SD_MMC.begin() = function provided by the SD_MMC library that initializes the SD card interface and mounts the file system on the SD card.

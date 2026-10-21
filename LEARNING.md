@@ -222,3 +222,24 @@ run **npx.cmd expo start** inside \mobile route of project
 
 
 
+# ESP32-CAM: Saving Photos to microSD
+
+- **`#include "SD_MMC.h"`** — library for accessing the ESP32's microSD card.
+- **`#include "FS.h"`** — provides file system operations.
+- **`SD_MMC.begin("/sdcard", true)`** — initialises the SD card in 1-bit mode, leaving GPIO13 available for the button.
+- **`esp_camera_fb_get()`** — captures a photo into a frame buffer (temporary memory).
+- **`SD_MMC.open("/photo.jpg", FILE_WRITE)`** — creates/opens a file for writing.
+- **`file.write(photo->buf, photo->len)`** — writes the JPEG image bytes to the file.
+- **`file.close()`** — closes the file.
+- **`esp_camera_fb_return(photo)`** — releases the camera buffer's memory.
+
+### Project progress
+- Formatted microSD card to FAT32.
+- Successfully initialised the SD card.
+- Physical button now captures and saves a JPEG.
+- Removed the unnecessary HTTP web server.
+
+### photo counter - added a counter for photos: photo1, photo2 etc. so photos dont get overwritten, not overwritten after resettign aswell
+### web access removal - removed uploading to IP address and ip/capture
+### offline mode - removed requirement for wifi to be connected for program to run
+
