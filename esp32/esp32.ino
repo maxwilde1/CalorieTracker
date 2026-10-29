@@ -8,7 +8,9 @@
 
 #include "FS.h" //library for file system operations, such as reading and writing files on the SD card
 
+#include "HTTPClient.h" //library for making HTTP requests to a server, such as sending data or receiving data from a web API
 
+#include <WiFiClientSecure.h> // library for establishing secure HTTPS connections over Wi-Fi, allowing the ESP32 to communicate with servers using SSL/TLS encryption
 
 // Camera pin connections for an AI Thinker-style ESP32-CAM
 #define PWDN_GPIO_NUM     32
@@ -34,6 +36,87 @@
 
 //This creates a constant named BUTTON_PIN with the value 13.
 const int BUTTON_PIN = 13;
+
+//function which is called after the photo is taken, if no wifi, stays on sd card as already done, else opens file
+// creates a fucntion that accepts a filename
+void uploadPhoto(String filename) {
+
+  // Only attempt uploads when connected to Wi-Fi
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("No Wi-Fi. Photo stays on SD card.");
+    return;
+  }
+
+
+
+
+String wifiName = WiFi.SSID();
+String ipName = WiFi.localIP().toString();
+Serial.println("Still connected to Wi-Fi: " + wifiName + " with IP: " + ipName);
+
+
+
+  // Open an existing photo from the SD card
+  File file = SD_MMC.open(filename, FILE_READ);
+
+  if (!file) {
+    Serial.println("Could not open photo!");
+    return;
+  }
+
+  Serial.print("Ready to upload: ");
+  Serial.println(filename);
+  Serial.print("Photo size: ");
+
+
+
+
+
+
+
+
+  
+  Serial.println(file.size());
+
+// Create a secure HTTPS connection
+WiFiClientSecure client;
+client.setInsecure();  // Testing only: skips certificate verification
+
+HTTPClient http;
+
+// Connect to our Supabase Edge Function
+if (!http.begin(client, SUPABASE_UPLOAD_URL)) {
+  Serial.println("Could not start HTTP connection.");
+  file.close();
+  return;
+}
+
+// Add the headers expected by our Edge Function
+http.addHeader("Content-Type", "image/jpeg");
+http.addHeader("x-device-token", DEVICE_UPLOAD_TOKEN);
+
+// Send the JPEG bytes directly from the SD card
+int responseCode = http.sendRequest("POST", &file, file.size());
+
+// Check Supabase's response
+Serial.print("HTTP response: ");
+Serial.println(responseCode);
+
+if (responseCode == 200) {
+  Serial.println("Photo uploaded successfully!");
+  Serial.println(http.getString());
+} else {
+  Serial.println("Upload failed. Photo remains on SD card.");
+  Serial.println(http.getString());
+}
+
+// Close the connections
+http.end();
+file.close();
+
+  file.close();
+}
+
 
 //Global variable to keep track of the photo number
 int photoNumber = 1; 
@@ -78,9 +161,11 @@ void takePhoto(){
   //fine for testing, but we'll need to send the photograph somewhere before returning the buffer.
   esp_camera_fb_return(photo);
   
-  Serial.println("Photo " + String(photoNumber) + " saved to SD card!");
-};
+  Serial.println(filename + " saved to SD card!");
 
+  uploadPhoto(filename);
+
+};
 
 
 
@@ -94,8 +179,7 @@ void setup() {
   //this means button pressed = low and button released = high. This is because the internal pull-up resistor connects the pin to a high voltage level when the button is not pressed, and when the button is pressed, it connects the pin to ground (low voltage level).
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
-
-  //WHILE LOOP CURRENTLY MEANS WIFI CONNECTION NEEDED FOR REST OF PROGRAM TO RUN - NEED TO CHANGE SO CAN RUN OFFLINE
+  // Try connecting to Wi-Fi for up to 5 seconds, then continue offline
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD); //.begin() is a function provided by the WiFi library that intiises the wifi connection.
   Serial.print("Connecting to Wi-Fi");
 

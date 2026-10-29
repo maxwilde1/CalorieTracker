@@ -243,3 +243,296 @@ run **npx.cmd expo start** inside \mobile route of project
 ### web access removal - removed uploading to IP address and ip/capture
 ### offline mode - removed requirement for wifi to be connected for program to run
 
+
+# Progress
+[x] Set up ESP32-CAM and physical button
+[x] Capture photos and save to microSD
+[x] Give photos unique filenames
+[x] Allow photo capture without Wi-Fi
+[ ] Set up Supabase (storage, database and backend function)
+[ ] Connect ESP32 to Supabase and upload photos
+[ ] Automatically retry failed uploads and delete successfully uploaded photos from SD
+[ ] Integrate OpenAI API to estimate calories and nutrients
+[ ] Build Expo mobile app to display meals and nutritional data
+[ ] Add user authentication and secure API access
+[ ] Optimise battery life (Wi-Fi scheduling - attempt to connect to wifi every 15 mins/when button clicked twice maybe?, sleep modes)
+[ ] Test complete system end-to-end
+
+
+
+
+# Supabase
+in supabase: storage -> bucket created named food-photos (cloud folder where JPEG images will be stored)
+edge functions -> deploy a new function -> Via editor -> function name = upload-photo 
+### test
+replaced code with: 
+Deno.serve((_req) => {
+  return new Response(
+    JSON.stringify({ message: "CalorieTracker backend is working!" }),
+    {
+      headers: { "Content-Type": "application/json" },
+    }
+  );
+});
+
+- Deno.serve() — starts a function that handles incoming HTTP requests.
+- _req — represents the incoming request (we aren't using it yet).
+- Response — sends a response back to whoever called the function.
+- JSON.stringify() — converts a JavaScript object into JSON.
+
+-> click test -> HTTP = POST -> leave request body as is or leave empty -> send request -> check working
+
+Before moving on need to make sure strangers cant upload files to this storage so will use **device-specific secret token** that the esp32 sends with each request
+
+## create a secret in supabase
+edge functions-> secrets -> new secret named DEVICE_UPLOAD_TOKEN -> value = make it random
+
+## new code with secrets:
+Deno.serve((req) => {
+  // Get the token sent by the ESP32
+  const providedToken = req.headers.get("x-device-token");
+
+  // Get the correct token stored in Supabase
+  const correctToken = Deno.env.get("DEVICE_UPLOAD_TOKEN");
+
+  // Reject requests without the correct token
+  if (!correctToken || providedToken !== correctToken) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  return new Response(
+    JSON.stringify({ message: "Device authenticated!" }),
+    {
+      headers: { "Content-Type": "application/json" },
+    }
+  );
+});
+
+- req.headers.get() reads information sent with an HTTP request.
+- Deno.env.get() retrieves a secret stored in Supabase.
+- !== means not equal to.
+- 401 is the HTTP status code for an unauthorised request.
+
+
+test with example request body -> should give 401 unauthorised 
+test with header x-device-token and header value 'my value' -> 200 OK
+
+## new code 
+### test that our backend can receive the actual image data from the ESP32, rather than just a message.
+
+Deno.serve(async (req) => {
+  const providedToken = req.headers.get("x-device-token");
+  const correctToken = Deno.env.get("DEVICE_UPLOAD_TOKEN");
+
+  if (!correctToken || providedToken !== correctToken) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  // Read the uploaded photo as binary data
+  const photo = await req.arrayBuffer();
+
+  // Check that a photo was actually received
+  if (photo.byteLength === 0) {
+    return new Response("No photo received", { status: 400 });
+  }
+
+  return Response.json({
+    message: "Photo received!",
+    bytes: photo.byteLength,
+  });
+});
+
+- async — allows the function to wait for operations.
+- await req.arrayBuffer() — reads the incoming binary data (the JPEG).
+- photo.byteLength — tells us how many bytes were received.
+- 400 — indicates an invalid request.
+
+## new code again
+### The previous code only received the photo. The new code saves it to Supabase Storage.
+
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+Deno.serve(async (req) => {
+  // 1. Check the device token
+  const providedToken = req.headers.get("x-device-token");
+  const correctToken = Deno.env.get("DEVICE_UPLOAD_TOKEN");
+
+  if (!correctToken || providedToken !== correctToken) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  // 2. Read the photo
+  const photo = await req.arrayBuffer();
+
+  if (photo.byteLength === 0) {
+    return new Response("No photo received", { status: 400 });
+  }
+
+  // 3. Connect to Supabase Storage
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
+
+  // 4. Generate a unique filename
+  const filename = `${crypto.randomUUID()}.jpg`;
+
+  // 5. Save the photo
+  const { error } = await supabase.storage
+    .from("food-photos")
+    .upload(filename, photo, {
+      contentType: "image/jpeg",
+    });
+
+  if (error) {
+    return new Response(error.message, { status: 500 });
+  }
+
+  return Response.json({
+    message: "Photo saved successfully!",
+    filename: filename,
+  });
+});
+
+- createClient()	Connects the function to your Supabase project
+- SUPABASE_SERVICE_ROLE_KEY	Gives the backend permission to write to private Storage
+- crypto.randomUUID()	Creates a unique filename
+- .from("food-photos")	Selects your storage bucket
+- .upload()	Saves the JPEG to the bucket
+
+
+### 29/10/26
+- back after a few days, supabase got paused so had to resume, may need to upgrade in the future 
+
+
+## check if photo is JPEG 
+for simplicity, security and efficiency 
+
+`const bytes = new Uint8Array(photo); `
+
+`if (`
+  `bytes.length < 4 ||`
+  `bytes[0] !== 0xFF ||`
+  `bytes[1] !== 0xD8 ||`
+  `bytes[2] !== 0xFF`
+`) {`
+  `return new Response("Invalid JPEG image", { status: 400 });   }`
+
+- `Uint8Array(photo)` lets us inspect the individual bytes.
+- `0xFF, 0xD8, 0xFF` are the starting bytes normally found in a JPEG file.
+- `400` means the request contains invalid data.
+
+
+
+# Sending photo to supabase
+
+`#include <HTTPClient.h>` - This lets my ESP32 send HTTP requests to a server.
+My ESP32 will eventually use an HTTP POST request to send JPEG data to the upload-photo Edge Function.
+
+`const char* SUPABASE_UPLOAD_URL = "https://YOUR-PROJECT-ID.supabase.co/functions/v1/upload-photo";` 
+const char* DEVICE_UPLOAD_TOKEN = "YOUR_DEVICE_TOKEN";
+- added in these with appropriate values and links within the #define SECRETS_H function
+
+## Supbase Authentication
+### JWT vs Device Token
+
+**Why does Supabase have two authentication methods?**
+
+1. **JWT (JSON Web Token):** Supabase's built-in authentication system. JWTs are commonly used to verify logged-in users.
+2. **Device token:** Our own secret password that identifies an authorised ESP32-CAM.
+
+**How our project works:**
+
+- We disable Supabase's built-in JWT verification for the `upload-photo` Edge Function.
+- The ESP32 sends its secret token in an HTTP header called `x-device-token`.
+- The Edge Function compares that token with `DEVICE_UPLOAD_TOKEN`, securely stored in Supabase.
+- If they match → request accepted.
+- If they don't match → `401 Unauthorized`.
+
+**Why disable JWT verification?**
+
+Our ESP32 isn't a logged-in user, so it doesn't have a user JWT. Instead, we're using a simpler device-token authentication system.
+
+**Important:** Disabling JWT verification doesn't automatically make uploads unrestricted because our Edge Function still checks the device token. However, the endpoint is publicly reachable, so the token must remain secret and further security measures may be needed for production.
+
+**Key lesson:** Authentication verifies *who or what is making a request*. JWTs and custom device tokens are two different ways of doing this.
+
+## Function whis is called after photo taken called uploadPhoto
+
+//function which is called after the photo is taken, if no wifi, stays on sd card as already done, else opens file
+// creates a fucntion that accepts a filename
+void uploadPhoto(String filename) {
+
+  // Only attempt uploads when connected to Wi-Fi
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("No Wi-Fi. Photo stays on SD card.");
+    return;
+  }
+String wifiName = WiFi.SSID();
+String ipName = WiFi.localIP().toString();
+Serial.println("Still connected to Wi-Fi: " + wifiName + " with IP: " + ipName);
+
+  // Open an existing photo from the SD card
+  File file = SD_MMC.open(filename, FILE_READ);
+
+  if (!file) {
+    Serial.println("Could not open photo!");
+    return;
+  }
+
+  Serial.print("Ready to upload: ");
+  Serial.println(filename);
+  Serial.print("Photo size: ");
+  Serial.println(file.size());
+  file.close();
+
+
+
+
+
+
+## Then adding at the end of this for the actual send
+Serial.println(file.size());
+
+// Create a secure HTTPS connection
+WiFiClientSecure client;
+client.setInsecure();  // Testing only: skips certificate verification
+
+HTTPClient http;
+
+// Connect to our Supabase Edge Function
+if (!http.begin(client, SUPABASE_UPLOAD_URL)) {
+  Serial.println("Could not start HTTP connection.");
+  file.close();
+  return;
+}
+
+// Add the headers expected by our Edge Function
+http.addHeader("Content-Type", "image/jpeg");
+http.addHeader("x-device-token", DEVICE_UPLOAD_TOKEN);
+
+// Send the JPEG bytes directly from the SD card
+int responseCode = http.sendRequest("POST", &file, file.size());
+
+// Check Supabase's response
+Serial.print("HTTP response: ");
+Serial.println(responseCode);
+
+if (responseCode == 200) {
+  Serial.println("Photo uploaded successfully!");
+  Serial.println(http.getString());
+} else {
+  Serial.println("Upload failed. Photo remains on SD card.");
+  Serial.println(http.getString());
+}
+
+// Close the connections
+http.end();
+file.close();
+
+- WiFiClientSecure	Creates an HTTPS connection
+- HTTPClient	Builds and sends the HTTP request
+- http.addHeader()	Adds information such as your device token
+- http.sendRequest("POST", &file, file.size())	Streams the JPEG from the SD card to Supabase
+- responseCode == 200	Checks whether Supabase reported success
+- http.end()	Closes the HTTP connection
