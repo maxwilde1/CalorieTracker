@@ -255,7 +255,7 @@ run **npx.cmd expo start** inside \mobile route of project
 [ ] Integrate OpenAI API to estimate calories and nutrients
 [ ] Build Expo mobile app to display meals and nutritional data
 [ ] Add user authentication and secure API access
-[ ] Optimise battery life (Wi-Fi scheduling - attempt to connect to wifi every 15 mins/when button clicked twice maybe?, sleep modes)
+[ ] Optimise battery life (Wi-Fi scheduling - attempt to connect to wifi every 15 mins/when button clicked twice maybe?, sleep modes, may need to move button to GPIO pin which wakes device from deep sleep, 13 doesnt do this at the moment)
 [ ] Test complete system end-to-end
 
 
@@ -536,3 +536,317 @@ file.close();
 - http.sendRequest("POST", &file, file.size())	Streams the JPEG from the SD card to Supabase
 - responseCode == 200	Checks whether Supabase reported success
 - http.end()	Closes the HTTP connection
+
+
+
+
+## function to list all photos on the sd card
+//function to list all the photos on the SD card, prints the names of all files in the root directory of the SD card to the serial monitor.
+void listPhotos() {
+  File root = SD_MMC.open("/");
+
+  File file = root.openNextFile();
+
+  while (file) {
+    //only print the name of the file if it is not a directory and has a .jpg extension
+    if (!file.isDirectory() && String(file.name()).endsWith(".jpg")) {
+      Serial.println(file.name());
+    }
+    file = root.openNextFile();
+  }
+
+  root.close();
+}
+
+
+
+## delete photo just taken 
+### add onto end of upload photo function
+// Only delete the local photo if Supabase confirmed success
+if (responseCode == 200) {
+  if (SD_MMC.remove(filename)) {
+    Serial.println("Deleted from SD card: " + filename);
+  } else {
+    Serial.println("Failed to delete: " + filename);
+  }
+}
+
+
+
+## upload pending photos 
+// Upload all JPEG photos currently on the SD card
+void uploadPendingPhotos() {
+
+  // Don't attempt uploads without Wi-Fi
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+
+  // Open the SD card's root directory
+  File root = SD_MMC.open("/");
+
+  // Find the first file
+  File file = root.openNextFile();
+
+  while (file) {
+
+    if (!file.isDirectory() && String(file.name()).endsWith(".jpg")) {
+
+      String filename = "/" + String(file.name());
+
+      // Close the file before uploading it
+      file.close();
+
+      // Reuse our existing upload function
+      uploadPhoto(filename);
+
+    } else {
+      file.close();
+    }
+
+    // Move to the next file
+    file = root.openNextFile();
+  }
+
+  root.close();
+}
+
+
+## changed to this so no files are skipped
+
+void uploadPendingPhotos() {
+
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+
+  while (true) {
+
+    File root = SD_MMC.open("/");
+    File file = root.openNextFile();
+
+    String filename = "";
+
+    // Find the first JPEG
+    while (file) {
+
+      if (!file.isDirectory() && String(file.name()).endsWith(".jpg")) {
+        filename = "/" + String(file.name());
+        file.close();
+        break;
+      }
+
+      file.close();
+      file = root.openNextFile();
+    }
+
+    root.close();
+
+    // No more photos to upload
+    if (filename == "") {
+      break;
+    }
+
+    uploadPhoto(filename);
+
+    // Stop if the photo is still there (upload or deletion failed)
+    if (SD_MMC.exists(filename)) {
+      Serial.println("Photo still pending. Stopping retries.");
+      break;
+    }
+  }
+}
+
+## upload pending photos - run in loop
+### created `bool wasWifiConnected = false;`
+
+  bool wifiConnected = (WiFi.status() == WL_CONNECTED);
+
+  if (wifiConnected && !wasWifiConnected) {
+    Serial.println("Wi-Fi connected! Checking for pending photos...");
+    uploadPendingPhotos();
+  }
+
+  wasWifiConnected = wifiConnected;
+
+
+### Problem discovered — Battery consumption
+
+The ESP32 currently runs `loop()` continuously, repeatedly checking Wi-Fi status and the physical button.
+
+I questioned whether checking Wi-Fi constantly would waste battery.
+
+**Key learning:** Repeatedly checking `WiFi.status()` isn't the biggest power drain. Keeping the ESP32 processor and Wi-Fi radio awake continuously consumes much more energy.
+
+Checking Wi-Fi only once in `setup()` would reduce unnecessary polling, but would not significantly improve battery life unless the device also enters a low-power state.
+
+There is also a timing issue: Wi-Fi sometimes connects after the five-second startup timeout. A single check could miss that connection.
+
+### Planned solution — Deep sleep
+
+The eventual battery-powered design should:
+
+1. Remain in deep sleep when idle.
+2. Wake when the physical button is pressed.
+3. Capture and save the photo to the SD card.
+4. Attempt Wi-Fi for a limited period.
+5. Upload any pending photos if connected.
+6. Return to deep sleep.
+
+**Hardware consideration:** GPIO13, currently used for the button, isn't a standard deep-sleep external wake-up pin on the original ESP32. Button wiring may need changing.
+
+### Further improvements
+- Test automatic uploads of photos captured offline.
+- Replace `client.setInsecure()` with proper HTTPS certificate verification.
+- Verify that the full JPEG was written successfully to the SD card.
+- Implement deep sleep and measure battery consumption.
+- Consider how to retry failed uploads without unnecessary Wi-Fi activity.
+
+**Main takeaway:** A working prototype isn't necessarily an efficient finished product. Power consumption, reliable retries, file handling and security are important parts of embedded-system design.
+
+
+
+
+
+### Problem Fixed — Camera Uploading Previous Photo
+
+**Problem:** The ESP32-CAM was uploading the previous image rather than the scene currently in front of the camera.
+
+**Cause:** The camera was likely returning an old (stale) frame from its frame buffer.
+
+**Solution:** Capture and discard the first frame, then capture a fresh one.
+
+instead of just: `camera_fb_t *photo = esp_camera_fb_get();`
+
+i did :
+
+
+```cpp
+camera_fb_t *photo = esp_camera_fb_get();
+
+if (photo != nullptr) {
+  esp_camera_fb_return(photo);
+}
+
+photo = esp_camera_fb_get();
+```
+
+**Learning:**
+- `esp_camera_fb_get()` retrieves a camera frame buffer.
+- `esp_camera_fb_return()` releases that buffer back to the camera driver.
+- Discarding the first frame allows us to request a fresher image.
+
+**Result:** Photos now match what the camera is pointing at when the button is pressed.
+
+
+
+# CalorieTracker — Development Roadmap
+
+**Last updated:** 29 October 2026
+
+## Current Progress — Working ESP32 Prototype
+
+### Completed
+- [x] ESP32-CAM captures photos using a physical button.
+- [x] Photos saved to microSD as JPEG files.
+- [x] Photos uploaded to Supabase through an Edge Function.
+- [x] Successful uploads deleted from the SD card.
+- [x] Unique filenames prevent overwriting existing SD photos.
+- [x] Camera stale-frame issue fixed by discarding the first frame.
+- [x] `listPhotos()` function implemented.
+- [x] `uploadPendingPhotos()` function implemented.
+- [x] Wi-Fi connection detection added to `loop()`.
+
+**Current status:** Core camera-to-cloud upload works. Offline recovery and automatic pending uploads still need full testing.
+
+---
+
+## Phase 1 — Reliable ESP32 Uploads
+
+- [x] Test taking photos without Wi-Fi.
+- [x] Confirm offline photos remain on the SD card.
+- [x] Restore Wi-Fi and check automatic uploads.
+- [x] Test uploading multiple pending photos.
+- [ ] Confirm failed uploads are retained for retrying.
+- [ ] Improve Wi-Fi reconnection handling.
+- [ ] Handle SD card failures and incomplete photo writes.
+
+**Goal:** Never lose a photo because Wi-Fi is unavailable.
+
+## Phase 2 — Battery Optimisation
+
+- [ ] Choose battery and charging hardware.
+- [ ] Investigate deep-sleep-compatible wake-up pins.
+- [ ] Implement ESP32 deep sleep.
+- [ ] Wake ESP32 using the physical button.
+- [ ] Capture and save photos after waking.
+- [ ] Connect to Wi-Fi only when needed.
+- [ ] Upload pending photos before sleeping.
+- [ ] Measure battery consumption and runtime.
+
+**Important learning:** Continuously checking Wi-Fi isn't the main power problem. Keeping the ESP32 processor and Wi-Fi radio awake consumes much more energy.
+
+**Hardware consideration:** GPIO13 isn't suitable for standard external deep-sleep wake-up on the original ESP32.
+
+**Goal:** A portable camera with practical battery life.
+
+## Phase 3 — Secure Cloud Storage
+
+- [ ] Replace `client.setInsecure()` with proper HTTPS certificate verification.
+- [ ] Review Supabase Edge Function authentication.
+- [ ] Protect device tokens and API keys.
+- [ ] Add photo timestamps and metadata.
+- [ ] Improve duplicate upload handling.
+
+**Goal:** Secure and reliable cloud communication.
+
+## Phase 4 — Connect the Mobile App
+
+- [ ] Configure Supabase in the Expo React Native app.
+- [ ] Add user authentication.
+- [ ] Associate uploaded photos with the correct user.
+- [ ] Retrieve photos from Supabase Storage.
+- [ ] Display uploaded photos in the app.
+- [ ] Handle loading and connection errors.
+
+**Goal:** Photos taken on the ESP32 automatically appear in the mobile app.
+
+## Phase 5 — AI Food Recognition
+
+- [ ] Select a vision-capable AI model.
+- [ ] Create a secure backend for image analysis.
+- [ ] Identify food items from photos.
+- [ ] Estimate calories and protein.
+- [ ] Allow users to correct food and portion estimates.
+- [ ] Save analysed meals to Supabase.
+
+**Important:** AI nutrition estimates will be approximate, especially when portion sizes and ingredients are unclear.
+
+**Goal:** Automatically turn a food photo into a meal record.
+
+## Phase 6 — Complete Mobile App
+
+- [ ] Display daily calorie totals.
+- [ ] Display daily protein totals.
+- [ ] Show meal history.
+- [ ] Add manual food entries.
+- [ ] Allow editing and deleting meals.
+- [ ] Add daily nutrition goals.
+- [ ] Improve app design and usability.
+
+**Goal:** A functional calorie-tracking application.
+
+## Phase 7 — Hardware and Real-World Testing
+
+- [ ] Design a compact enclosure.
+- [ ] 3D-print the enclosure.
+- [ ] Install battery and charging components.
+- [ ] Test image quality in different lighting conditions.
+- [ ] Test offline operation over extended periods.
+- [ ] Measure actual battery life.
+- [ ] Test reliability over several days.
+
+**Goal:** A portable, usable physical product.
+
+---
+

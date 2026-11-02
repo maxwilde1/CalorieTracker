@@ -1,5 +1,7 @@
 //Arduino uses c++ 
 
+
+//LIBRARIES
 #include "esp_camera.h" //existing library for esp32 cam module 
 #include <WiFi.h> //existing library for wifi connection
 #include "secrets.h" //include the secrets.h file that contains the wifi credentials
@@ -12,6 +14,11 @@
 
 #include <WiFiClientSecure.h> // library for establishing secure HTTPS connections over Wi-Fi, allowing the ESP32 to communicate with servers using SSL/TLS encryption
 
+
+
+
+
+//CAMERA PIN DEFINITIONS
 // Camera pin connections for an AI Thinker-style ESP32-CAM
 #define PWDN_GPIO_NUM     32
 #define RESET_GPIO_NUM    -1
@@ -33,10 +40,39 @@
 #define PCLK_GPIO_NUM     22
 
 
-
+//GLOBAL VARIABLES 
 //This creates a constant named BUTTON_PIN with the value 13.
 const int BUTTON_PIN = 13;
+//Global variable to keep track of the photo number
+int photoNumber = 1; 
+// Global variable to keep track of Wi-Fi connection status
+bool wasWifiConnected = false;
 
+
+//FUNCTIONS
+//FUNCTION - LIST PHOTOS
+//function to list all the photos on the SD card, prints the names of all files in the root directory of the SD card to the serial monitor.
+void listPhotos() {
+  File root = SD_MMC.open("/");
+
+  File file = root.openNextFile();
+
+  while (file) {
+    //only print the name of the file if it is not a directory and has a .jpg extension
+    if (!file.isDirectory() && String(file.name()).endsWith(".jpg")) {
+      Serial.println(file.name());
+    }
+    file.close();
+    file = root.openNextFile();
+  }
+
+  root.close();
+}
+
+
+
+
+//FUNCTION - UPLOAD PHOTO
 //function which is called after the photo is taken, if no wifi, stays on sd card as already done, else opens file
 // creates a fucntion that accepts a filename
 void uploadPhoto(String filename) {
@@ -46,17 +82,12 @@ void uploadPhoto(String filename) {
     Serial.println("No Wi-Fi. Photo stays on SD card.");
     return;
   }
-
-
-
-
 String wifiName = WiFi.SSID();
 String ipName = WiFi.localIP().toString();
 Serial.println("Still connected to Wi-Fi: " + wifiName + " with IP: " + ipName);
 
-
-
   // Open an existing photo from the SD card
+  // Opens one specific photo from the SD card, using the filename provided as an argument to the function. 
   File file = SD_MMC.open(filename, FILE_READ);
 
   if (!file) {
@@ -67,17 +98,11 @@ Serial.println("Still connected to Wi-Fi: " + wifiName + " with IP: " + ipName);
   Serial.print("Ready to upload: ");
   Serial.println(filename);
   Serial.print("Photo size: ");
-
-
-
-
-
-
+  Serial.println(file.size());
 
 
   
-  Serial.println(file.size());
-
+//Send the photo to the Supabase Edge Function using an HTTP POST request
 // Create a secure HTTPS connection
 WiFiClientSecure client;
 client.setInsecure();  // Testing only: skips certificate verification
@@ -114,17 +139,79 @@ if (responseCode == 200) {
 http.end();
 file.close();
 
-  file.close();
+// Only delete the local photo if Supabase confirmed success
+if (responseCode == 200) {
+  if (SD_MMC.remove(filename)) {
+    Serial.println("Deleted from SD card: " + filename);
+  } else {
+    Serial.println("Failed to delete: " + filename);
+  }
+}
+
 }
 
 
-//Global variable to keep track of the photo number
-int photoNumber = 1; 
+
+//FUNCTION - UPLOAD PENDING PHOTOS
+// Upload all JPEG photos currently on the SD card
+void uploadPendingPhotos() {
+
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+
+  while (true) {
+
+    File root = SD_MMC.open("/");
+    File file = root.openNextFile();
+
+    String filename = "";
+
+    // Find the first JPEG
+    while (file) {
+
+      if (!file.isDirectory() && String(file.name()).endsWith(".jpg")) {
+        filename = "/" + String(file.name());
+        file.close();
+        break;
+      }
+
+      file.close();
+      file = root.openNextFile();
+    }
+
+    root.close();
+
+    // No more photos to upload
+    if (filename == "") {
+      break;
+    }
+Serial.println("PENDING PHOTO UPLOAD: " + filename);
+    uploadPhoto(filename);
+
+    // Stop if the photo is still there (upload or deletion failed)
+    if (SD_MMC.exists(filename)) {
+      Serial.println("Photo still pending. Stopping retries.");
+      break;
+    }
+  }
+}
 
 
 
+
+//FUNCTION - TAKE PHOTO
+//function to take a photo, save it to the SD card, and then upload it to
 void takePhoto(){
+  // Discard the first frame, which may be stale
   camera_fb_t *photo = esp_camera_fb_get();
+
+  if (photo != nullptr) {
+    esp_camera_fb_return(photo);
+  } 
+
+  // Capture a fresh frame
+  photo = esp_camera_fb_get();
 
   if (photo == nullptr) {
     Serial.println("Photo capture failed!");
@@ -162,13 +249,14 @@ void takePhoto(){
   esp_camera_fb_return(photo);
   
   Serial.println(filename + " saved to SD card!");
-
+Serial.println("NEW PHOTO UPLOAD: " + filename);
   uploadPhoto(filename);
 
 };
 
 
-
+//FUNCTION - SETUP
+//setup() runs ONCE when the ESP32 is powered on or reset
 void setup() {
   Serial.begin(115200);
   Serial.println("Starting camera...");
@@ -209,10 +297,14 @@ void setup() {
 //SD_MMC.begin() = function provided by the SD_MMC library that initializes the SD card interface and mounts the file system on the SD card.
   if (SD_MMC.begin("/sdcard", true)) {
       Serial.println("SD card connected!");
+      listPhotos(); //runs function to list all photos on SD, once SD card is connected succefully
   }   
   else {
   Serial.println("SD card failed!");
   }
+
+
+
 
   // Create a configuration object for the camera
   //camera_config_t is a predefined struct (structure) = data structure by the esp32 camera library, holds many different settings may include some ints some bools etc. 
@@ -263,10 +355,28 @@ void setup() {
   }
 
   Serial.println("Camera initialised successfully!");
+
+
+
+
+
 }
 
+
+
+//LOOP - BUTTON PRESS DETECTION
 // loop() runs REPEATEDLY while the ESP32 is powered on
 void loop() {
+
+
+  bool wifiConnected = (WiFi.status() == WL_CONNECTED);
+
+  if (wifiConnected && !wasWifiConnected) {
+    Serial.println("Wi-Fi connected! Checking for pending photos...");
+    uploadPendingPhotos();
+  }
+
+  wasWifiConnected = wifiConnected;
 
 
       //digitalRead() = function that detects whether a GPIO pin is high or low
